@@ -12,19 +12,49 @@ use winit_input_helper::WinitInputHelper;
 
 mod editor;
 
-const WIDTH: u32 = 1024;
-const HEIGHT: u32 = 768;
+/* TODO's:
+ * - Handle exiting and entering fullscreen
+ * - Better monitor detection and setup
+ *   - Game mode: use Exclusive fullscreen? Or give user the option?
+ *   - Editor mode: use Borderless fullscreen
+ *   - Figure out pixels surface sizing, as always want a full window
+ * - Remember window location, size, etc, between restarts
+ *   - Check if able to open in those positions, otherwise pick a reasonabel default
+ *   - Store settings in proper place for each OS
+ */
+
+const WIDTH: u32 = 960;
+const HEIGHT: u32 = 540;
 
 fn main() -> anyhow::Result<()> {
     let max_level = "info";
     Logger::try_with_str(format!("{}, wgpu_core=warn, wgpu_hal=error", max_level))?.start()?;
 
     let event_loop = EventLoop::new();
+
+    let monitor = event_loop
+        .available_monitors()
+        .next()
+        .expect("no monitors found");
+
     let window = {
-        let size = LogicalSize::new(WIDTH as f64, HEIGHT as f64);
+        let monitor_size = monitor.size();
+        let (mut width, mut height) = (WIDTH, HEIGHT);
+        loop {
+            if width * 2 <= monitor_size.width && height * 2 <= monitor_size.height {
+                width *= 2;
+                height *= 2;
+            } else {
+                break;
+            }
+        }
+        let size = LogicalSize::new(width as f64, height as f64);
         WindowBuilder::new()
             .with_title("Papercut")
             .with_inner_size(size)
+            .with_min_inner_size(size)
+            .with_max_inner_size(size)
+            .with_position(monitor.position())
             .with_visible(false)
             .build(&event_loop)?
     };
@@ -35,8 +65,9 @@ fn main() -> anyhow::Result<()> {
         let size = window.inner_size();
         let scale_factor = window.scale_factor() as f32;
         let surface_texture = SurfaceTexture::new(size.width, size.height, &window);
-        let pixels =
-            pollster::block_on(PixelsBuilder::new(WIDTH, HEIGHT, surface_texture).build_async())?;
+        let pixels = pollster::block_on(
+            PixelsBuilder::new(size.width, size.height, surface_texture).build_async(),
+        )?;
         let editor = Editor::new(&event_loop, size.width, size.height, scale_factor, &pixels);
 
         (pixels, editor)
