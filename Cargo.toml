@@ -1,0 +1,18 @@
+[package]
+name = "papercut"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+egui = "0.19"
+egui-wgpu = "0.19"
+egui-winit = { version = "0.19", default-features = false }
+flexi_logger = "0.22"
+glam = "0.20"
+hecs = "0.7"
+log = "0.4"
+pixels = { version = "*", git = "https://github.com/parasyte/pixels" }
+thiserror = "1.0"
+winit = "0.27"
+winit_input_helper = "0.13"
