@@ -4,7 +4,7 @@ use log::error;
 use pixels::{PixelsBuilder, SurfaceTexture};
 use winit::{
     dpi::LogicalSize,
-    event::Event,
+    event::{DeviceEvent, ElementState, Event, KeyboardInput},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
@@ -105,6 +105,18 @@ fn main() -> anyhow::Result<()> {
         }
 
         match event {
+            Event::DeviceEvent {
+                event:
+                    DeviceEvent::Key(KeyboardInput {
+                        scancode: 41, // Grave - doesn't register as KeyboardInput event for some reason.
+                        state: ElementState::Pressed,
+                        ..
+                    }),
+                ..
+            } => {
+                // TODO: Ideally this would be a double press of the Grave key; use own input helper.
+                editor.toggle();
+            }
             Event::WindowEvent { window_id, event } if window_id == window.id() => {
                 editor.handle_event(&event);
             }

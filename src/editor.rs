@@ -12,10 +12,7 @@ pub(crate) struct Editor {
     paint_jobs: Vec<ClippedPrimitive>,
     textures: TexturesDelta,
     ui: EditorUi,
-}
-
-struct EditorUi {
-    window_open: bool,
+    enabled: bool,
 }
 
 impl Editor {
@@ -39,6 +36,7 @@ impl Editor {
         let rpass = RenderPass::new(pixels.device(), pixels.render_texture_format(), 1);
         let textures = TexturesDelta::default();
         let ui = EditorUi::new();
+        let enabled = false;
 
         Self {
             egui_ctx,
@@ -48,11 +46,18 @@ impl Editor {
             paint_jobs: Vec::new(),
             textures,
             ui,
+            enabled,
         }
     }
 
+    pub(crate) fn toggle(&mut self) {
+        self.enabled = !self.enabled;
+    }
+
     pub(crate) fn handle_event(&mut self, event: &winit::event::WindowEvent) {
-        self.egui_state.on_event(&self.egui_ctx, event);
+        if self.enabled {
+            self.egui_state.on_event(&self.egui_ctx, event);
+        }
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
@@ -66,15 +71,17 @@ impl Editor {
     }
 
     pub(crate) fn draw(&mut self, window: &Window) {
-        let raw_input = self.egui_state.take_egui_input(window);
-        let output = self.egui_ctx.run(raw_input, |egui_ctx| {
-            self.ui.ui(egui_ctx);
-        });
+        if self.enabled {
+            let raw_input = self.egui_state.take_egui_input(window);
+            let output = self.egui_ctx.run(raw_input, |egui_ctx| {
+                self.ui.ui(egui_ctx);
+            });
 
-        self.textures.append(output.textures_delta);
-        self.egui_state
-            .handle_platform_output(window, &self.egui_ctx, output.platform_output);
-        self.paint_jobs = self.egui_ctx.tessellate(output.shapes);
+            self.textures.append(output.textures_delta);
+            self.egui_state
+                .handle_platform_output(window, &self.egui_ctx, output.platform_output);
+            self.paint_jobs = self.egui_ctx.tessellate(output.shapes);
+        }
     }
 
     pub(crate) fn render(
@@ -83,36 +90,42 @@ impl Editor {
         render_target: &wgpu::TextureView,
         context: &PixelsContext,
     ) {
-        for (id, image_delta) in &self.textures.set {
-            self.rpass
-                .update_texture(&context.device, &context.queue, *id, image_delta);
-        }
+        if self.enabled {
+            for (id, image_delta) in &self.textures.set {
+                self.rpass
+                    .update_texture(&context.device, &context.queue, *id, image_delta);
+            }
 
-        self.rpass.update_buffers(
-            &context.device,
-            &context.queue,
-            &self.paint_jobs,
-            &self.screen_descriptor,
-        );
+            self.rpass.update_buffers(
+                &context.device,
+                &context.queue,
+                &self.paint_jobs,
+                &self.screen_descriptor,
+            );
 
-        self.rpass.execute(
-            encoder,
-            render_target,
-            &self.paint_jobs,
-            &self.screen_descriptor,
-            None,
-        );
+            self.rpass.execute(
+                encoder,
+                render_target,
+                &self.paint_jobs,
+                &self.screen_descriptor,
+                None,
+            );
 
-        let textures = std::mem::take(&mut self.textures);
-        for id in &textures.free {
-            self.rpass.free_texture(id);
+            let textures = std::mem::take(&mut self.textures);
+            for id in &textures.free {
+                self.rpass.free_texture(id);
+            }
         }
     }
 }
 
+struct EditorUi {
+    window_open: bool,
+}
+
 impl EditorUi {
     fn new() -> Self {
-        Self { window_open: true }
+        Self { window_open: false }
     }
 
     fn ui(&mut self, ctx: &Context) {
