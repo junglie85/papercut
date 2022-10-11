@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
+bytemuck = "1.12"
 egui = "0.19"
 egui-wgpu = "0.19"
 egui-winit = { version = "0.19", default-features = false }
