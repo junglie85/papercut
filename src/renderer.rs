@@ -1,17 +1,28 @@
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt, RenderPass};
 use winit::window::Window;
 
+use crate::texture::Texture;
+
+// TODO: Combine these vertex structs
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
+struct ShapeVertex {
     position: [f32; 3],
     color: [f32; 3],
 }
 
-impl Vertex {
+// TODO: Combine these vertex structs
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct SpriteVertex {
+    position: [f32; 3],
+    tex_coords: [f32; 2],
+}
+
+impl ShapeVertex {
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            array_stride: std::mem::size_of::<ShapeVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
@@ -29,42 +40,93 @@ impl Vertex {
     }
 }
 
-const VERTICES: &[Vertex] = &[
-    Vertex {
+impl SpriteVertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<SpriteVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
+        }
+    }
+}
+
+const SHAPE_VERTICES: &[ShapeVertex] = &[
+    ShapeVertex {
         position: [-0.0868241, 0.49240386, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // A
-    Vertex {
+    ShapeVertex {
         position: [-0.49513406, 0.06958647, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // B
-    Vertex {
+    ShapeVertex {
         position: [-0.21918549, -0.44939706, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // C
-    Vertex {
+    ShapeVertex {
         position: [0.35966998, -0.3473291, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // D
-    Vertex {
+    ShapeVertex {
         position: [0.44147372, 0.2347359, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // E
 ];
 
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, 0];
+const SHAPE_INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, 0];
+
+const SPRITE_VERTICES: &[SpriteVertex] = &[
+    SpriteVertex {
+        position: [-0.25, 0.25, 0.0],
+        tex_coords: [0.0, 0.0],
+    }, // A
+    SpriteVertex {
+        position: [-0.25, -0.75, 0.0],
+        tex_coords: [0.0, 1.0],
+    }, // B
+    SpriteVertex {
+        position: [0.75, 0.25, 0.0],
+        tex_coords: [1.0, 0.0],
+    }, // C
+    SpriteVertex {
+        position: [0.75, -0.75, 0.0],
+        tex_coords: [1.0, 1.0],
+    }, // D
+];
+
+const SPRITE_INDICES: &[u16] = &[0, 1, 2, 2, 1, 3];
 
 #[derive(Debug)]
 pub struct Renderer {
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+    shape_vertex_buffer: wgpu::Buffer,
+    shape_index_buffer: wgpu::Buffer,
     // uniform_buffer: wgpu::Buffer,
     // bind_group: wgpu::BindGroup,
-    render_pipeline: wgpu::RenderPipeline, // TODO: This is for a square / rectangel only!
+    shape_pipeline: wgpu::RenderPipeline, // TODO: This is for a (filled?) shape only! What if I want to draw a bounding box?
+    // TODO: What about wireframe / outlines?
     pub(crate) clear_color: wgpu::Color,
     // width: f32,
     // height: f32,
-    num_indices: u32,
+    shape_num_indices: u32,
+    /////////// Texture pipeline //////////////
+    sprite_vertex_buffer: wgpu::Buffer,
+    sprite_index_buffer: wgpu::Buffer,
+    // uniform_buffer: wgpu::Buffer,
+    // bind_group: wgpu::BindGroup,
+    sprite_pipeline: wgpu::RenderPipeline,
+    sprite_num_indices: u32,
+    sprite_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Renderer {
@@ -77,52 +139,173 @@ impl Renderer {
         clear_color: wgpu::Color,
         blend_state: wgpu::BlendState,
     ) -> Self {
-        // let shader = wgpu::include_wgsl!("../shaders/scale.wgsl");
-        // let module = device.create_shader_module(shader);
-
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        ////////////////////////////// Shape pipeline /////////////////////////////////
+        // TODO: Can I use a single shader here? Should I?
+        let shape_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shape_shader.wgsl").into()),
         });
 
+        // TODO: How do the buffers work when I want to update them each frame / don't know ahead of time all the things to draw? How does egui-wgpu do it?
         // Vertex buffer
-        let vertex_data_slice = bytemuck::cast_slice(&VERTICES);
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let shape_vertex_data_slice = bytemuck::cast_slice(&SHAPE_VERTICES);
+        let shape_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: vertex_data_slice,
+            contents: shape_vertex_data_slice,
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         // Index buffer
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let shape_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
+            contents: bytemuck::cast_slice(SHAPE_INDICES),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let num_indices = INDICES.len() as u32;
+        let shape_num_indices = SHAPE_INDICES.len() as u32;
 
         // Uniform buffer here.
 
         // Bind group
 
-        // Pipeline
-        let render_pipeline_layout =
+        // Shape Pipeline
+        let shape_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
+                label: Some("Shape Pipeline Layout"),
                 bind_group_layouts: &[],
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
+        let shape_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Shape Pipeline"),
+            layout: Some(&shape_pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &shape_shader,
                 entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
+                buffers: &[ShapeVertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &shape_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    // blend: Some(wgpu::BlendState {
+                    //     color: wgpu::BlendComponent::REPLACE,
+                    //     alpha: wgpu::BlendComponent::REPLACE,
+                    // }),
+                    blend: Some(blend_state),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
+                // or Features::POLYGON_MODE_POINT
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            // If the pipeline will be used with a multiview render pass, this
+            // indicates how many array layers the attachments will have.
+            multiview: None,
+        });
+
+        ////////////////////////////// Sprite pipeline /////////////////////////////////
+        // TODO: Can I use a single shader here? Should I?
+        let sprite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Sprite Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sprite_shader.wgsl").into()),
+        });
+
+        // TODO: How do the buffers work when I want to update them each frame / don't know ahead of time all the things to draw? How does egui-wgpu do it?
+        // Vertex buffer
+        let sprite_vertex_data_slice = bytemuck::cast_slice(&SPRITE_VERTICES);
+        let sprite_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Sprite Vertex Buffer"),
+            contents: sprite_vertex_data_slice,
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        // Index buffer
+        let sprite_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Sprite Index Buffer"),
+            contents: bytemuck::cast_slice(SPRITE_INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let sprite_num_indices = SPRITE_INDICES.len() as u32;
+
+        // Uniform buffer here.
+
+        // Bind group
+        let sprite_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        // This should match the filterable field of the
+                        // corresponding Texture entry above.
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
+
+        // // This bind group can be swapped out on the fly with other compatible bind groups.
+        // let sprite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     layout: &sprite_bind_group_layout,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::TextureView(&sprite_texture.view),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::Sampler(&sprite_texture.sampler),
+        //         },
+        //     ],
+        //     label: Some("Sprite Bind Group"),
+        // });
+
+        // Sprite Pipeline
+        let sprite_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Sprite Pipeline Layout"),
+                bind_group_layouts: &[&sprite_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let sprite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Sprite Pipeline"),
+            layout: Some(&sprite_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &sprite_shader,
+                entry_point: "vs_main",
+                buffers: &[SpriteVertex::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &sprite_shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
@@ -159,18 +342,47 @@ impl Renderer {
         });
 
         Self {
-            vertex_buffer,
-            index_buffer,
+            shape_vertex_buffer,
+            shape_index_buffer,
             // uniform_buffer,
-            // bind_group,
-            render_pipeline,
+            shape_pipeline,
             clear_color,
-            num_indices,
+            shape_num_indices,
+            sprite_vertex_buffer,
+            sprite_index_buffer,
+            // uniform_buffer,
+            sprite_pipeline,
+            sprite_num_indices,
+            sprite_bind_group_layout,
         }
     }
 
-    pub fn render(&self, encoder: &mut wgpu::CommandEncoder, render_target: &wgpu::TextureView) {
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    // pub fn render(&self, encoder: &mut wgpu::CommandEncoder, render_target: &wgpu::TextureView) {
+    //     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    //         label: Some("Render Pass"),
+    //         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+    //             view: &render_target,
+    //             resolve_target: None,
+    //             ops: wgpu::Operations {
+    //                 load: wgpu::LoadOp::Clear(self.clear_color),
+    //                 store: true,
+    //             },
+    //         })],
+    //         depth_stencil_attachment: None,
+    //     });
+
+    //     render_pass.set_pipeline(&self.render_pipeline);
+    //     render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+    //     render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+    //     render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+    // }
+
+    pub fn begin<'pass>(
+        &self,
+        encoder: &'pass mut wgpu::CommandEncoder,
+        render_target: &'pass wgpu::TextureView,
+    ) -> RenderPass<'pass> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &render_target,
@@ -181,12 +393,51 @@ impl Renderer {
                 },
             })],
             depth_stencil_attachment: None,
-        });
+        })
+    }
 
-        render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+    pub fn render<'pass>(
+        &'pass self,
+        render_pass: &mut RenderPass<'pass>,
+        sprite_bind_group: &'pass wgpu::BindGroup,
+    ) {
+        // We need to loop over all the things we want to render and do these steps for each of them.
+        render_pass.set_pipeline(&self.shape_pipeline);
+        render_pass.set_vertex_buffer(0, self.shape_vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.shape_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.draw_indexed(0..self.shape_num_indices, 0, 0..1);
+
+        render_pass.set_pipeline(&self.sprite_pipeline);
+        render_pass.set_bind_group(0, sprite_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.sprite_vertex_buffer.slice(..));
+        render_pass.set_index_buffer(
+            self.sprite_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint16,
+        );
+        render_pass.draw_indexed(0..self.sprite_num_indices, 0, 0..1);
+        // Here we also need to set the uniform bind group and maybe scissor rect for the rpass?
+    }
+
+    pub fn create_sprite_bind_group(
+        &self,
+        texture: &Texture,
+        device: &wgpu::Device,
+    ) -> wgpu::BindGroup {
+        // This bind group can be swapped out on the fly with other compatible bind groups.
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.sprite_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                },
+            ],
+            label: Some("Sprite Bind Group"),
+        })
     }
 }
 

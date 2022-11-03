@@ -9,6 +9,7 @@ use winit::{
 };
 
 mod renderer;
+mod texture;
 
 fn main() {
     pollster::block_on(run());
@@ -56,6 +57,14 @@ pub async fn run() {
         blend_state,
     );
 
+    ////// Start game state stuff
+    let sprite_bytes = include_bytes!("../tree.png");
+    let sprite_texture =
+        texture::Texture::from_bytes(&bananas.device, &bananas.queue, sprite_bytes, "tree.png")
+            .expect("TODO");
+    let sprite_bind_group = renderer.create_sprite_bind_group(&sprite_texture, &bananas.device);
+    ////// End game state stuff
+
     window.set_visible(true);
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -88,7 +97,7 @@ pub async fn run() {
             }
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 // state.update();
-                match make_piccys(&bananas, &renderer) {
+                match make_piccys(&bananas, &renderer, &sprite_bind_group) {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -110,7 +119,13 @@ pub async fn run() {
     });
 }
 
-fn make_piccys(bananas: &Bananas, renderer: &Renderer) -> Result<(), wgpu::SurfaceError> {
+fn make_piccys(
+    bananas: &Bananas,
+    renderer: &Renderer,
+    sprite_bind_group: &wgpu::BindGroup,
+) -> Result<(), wgpu::SurfaceError> {
+    // TODO: Textures / sprites
+    // TODO: Camera
     let frame = bananas.surface.get_current_texture()?;
     let render_target = frame
         .texture
@@ -123,7 +138,12 @@ fn make_piccys(bananas: &Bananas, renderer: &Renderer) -> Result<(), wgpu::Surfa
         });
 
     {
-        renderer.render(&mut encoder, &render_target);
+        let mut render_pass = renderer.begin(&mut encoder, &render_target);
+        // let mut gfx = renderer.begin(&mut encoder, &render_target); ???
+        // gfx.draw_shape(shape); ???
+        // gfx.draw_sprite(sprite); ???
+        // renderer.end(gfx); ???
+        renderer.render(&mut render_pass, sprite_bind_group);
     }
 
     bananas.queue.submit(iter::once(encoder.finish()));
@@ -131,3 +151,5 @@ fn make_piccys(bananas: &Bananas, renderer: &Renderer) -> Result<(), wgpu::Surfa
 
     Ok(())
 }
+
+// struct Shape {}
