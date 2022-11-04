@@ -3,47 +3,18 @@ use winit::window::Window;
 
 use crate::texture::Texture;
 
-// TODO: Combine these vertex structs
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct ShapeVertex {
+struct Vertex {
     position: [f32; 3],
+    tex_coords: [f32; 2],
     color: [f32; 3],
 }
 
-// TODO: Combine these vertex structs
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct SpriteVertex {
-    position: [f32; 3],
-    tex_coords: [f32; 2],
-}
-
-impl ShapeVertex {
+impl Vertex {
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<ShapeVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
-        }
-    }
-}
-
-impl SpriteVertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<SpriteVertex>() as wgpu::BufferAddress,
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
@@ -56,56 +27,174 @@ impl SpriteVertex {
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x2,
                 },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
             ],
         }
     }
 }
 
-const SHAPE_VERTICES: &[ShapeVertex] = &[
-    ShapeVertex {
+const SHAPE_VERTICES: &[Vertex] = &[
+    Vertex {
         position: [-0.0868241, 0.49240386, 0.0],
+        tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // A
-    ShapeVertex {
+    Vertex {
         position: [-0.49513406, 0.06958647, 0.0],
+        tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // B
-    ShapeVertex {
+    Vertex {
         position: [-0.21918549, -0.44939706, 0.0],
+        tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // C
-    ShapeVertex {
+    Vertex {
         position: [0.35966998, -0.3473291, 0.0],
+        tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // D
-    ShapeVertex {
+    Vertex {
         position: [0.44147372, 0.2347359, 0.0],
+        tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // E
 ];
 
 const SHAPE_INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, 0];
 
-const SPRITE_VERTICES: &[SpriteVertex] = &[
-    SpriteVertex {
+const SPRITE_VERTICES: &[Vertex] = &[
+    Vertex {
         position: [-0.25, 0.25, 0.0],
         tex_coords: [0.0, 0.0],
+        color: [1.0, 1.0, 1.0],
     }, // A
-    SpriteVertex {
+    Vertex {
         position: [-0.25, -0.75, 0.0],
         tex_coords: [0.0, 1.0],
+        color: [1.0, 1.0, 1.0],
     }, // B
-    SpriteVertex {
+    Vertex {
         position: [0.75, 0.25, 0.0],
         tex_coords: [1.0, 0.0],
+        color: [1.0, 1.0, 1.0],
     }, // C
-    SpriteVertex {
+    Vertex {
         position: [0.75, -0.75, 0.0],
         tex_coords: [1.0, 1.0],
+        color: [1.0, 1.0, 1.0],
     }, // D
 ];
 
 const SPRITE_INDICES: &[u16] = &[0, 1, 2, 2, 1, 3];
+
+// // TODO: Combine these vertex structs
+// #[repr(C)]
+// #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+// struct ShapeVertex {
+//     position: [f32; 3],
+//     color: [f32; 3],
+// }
+
+// // TODO: Combine these vertex structs
+// #[repr(C)]
+// #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+// struct SpriteVertex {
+//     position: [f32; 3],
+//     tex_coords: [f32; 2],
+// }
+
+// impl ShapeVertex {
+//     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+//         wgpu::VertexBufferLayout {
+//             array_stride: std::mem::size_of::<ShapeVertex>() as wgpu::BufferAddress,
+//             step_mode: wgpu::VertexStepMode::Vertex,
+//             attributes: &[
+//                 wgpu::VertexAttribute {
+//                     offset: 0,
+//                     shader_location: 0,
+//                     format: wgpu::VertexFormat::Float32x3,
+//                 },
+//                 wgpu::VertexAttribute {
+//                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+//                     shader_location: 1,
+//                     format: wgpu::VertexFormat::Float32x3,
+//                 },
+//             ],
+//         }
+//     }
+// }
+
+// impl SpriteVertex {
+//     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+//         wgpu::VertexBufferLayout {
+//             array_stride: std::mem::size_of::<SpriteVertex>() as wgpu::BufferAddress,
+//             step_mode: wgpu::VertexStepMode::Vertex,
+//             attributes: &[
+//                 wgpu::VertexAttribute {
+//                     offset: 0,
+//                     shader_location: 0,
+//                     format: wgpu::VertexFormat::Float32x3,
+//                 },
+//                 wgpu::VertexAttribute {
+//                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+//                     shader_location: 1,
+//                     format: wgpu::VertexFormat::Float32x2,
+//                 },
+//             ],
+//         }
+//     }
+// }
+
+// const SHAPE_VERTICES: &[ShapeVertex] = &[
+//     ShapeVertex {
+//         position: [-0.0868241, 0.49240386, 0.0],
+//         color: [0.5, 0.0, 0.5],
+//     }, // A
+//     ShapeVertex {
+//         position: [-0.49513406, 0.06958647, 0.0],
+//         color: [0.5, 0.0, 0.5],
+//     }, // B
+//     ShapeVertex {
+//         position: [-0.21918549, -0.44939706, 0.0],
+//         color: [0.5, 0.0, 0.5],
+//     }, // C
+//     ShapeVertex {
+//         position: [0.35966998, -0.3473291, 0.0],
+//         color: [0.5, 0.0, 0.5],
+//     }, // D
+//     ShapeVertex {
+//         position: [0.44147372, 0.2347359, 0.0],
+//         color: [0.5, 0.0, 0.5],
+//     }, // E
+// ];
+
+// const SHAPE_INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, 0];
+
+// const SPRITE_VERTICES: &[SpriteVertex] = &[
+//     SpriteVertex {
+//         position: [-0.25, 0.25, 0.0],
+//         tex_coords: [0.0, 0.0],
+//     }, // A
+//     SpriteVertex {
+//         position: [-0.25, -0.75, 0.0],
+//         tex_coords: [0.0, 1.0],
+//     }, // B
+//     SpriteVertex {
+//         position: [0.75, 0.25, 0.0],
+//         tex_coords: [1.0, 0.0],
+//     }, // C
+//     SpriteVertex {
+//         position: [0.75, -0.75, 0.0],
+//         tex_coords: [1.0, 1.0],
+//     }, // D
+// ];
+
+// const SPRITE_INDICES: &[u16] = &[0, 1, 2, 2, 1, 3];
 
 #[derive(Debug)]
 pub struct Renderer {
@@ -181,7 +270,8 @@ impl Renderer {
             vertex: wgpu::VertexState {
                 module: &shape_shader,
                 entry_point: "vs_main",
-                buffers: &[ShapeVertex::desc()],
+                // buffers: &[ShapeVertex::desc()],
+                buffers: &[Vertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shape_shader,
@@ -302,7 +392,8 @@ impl Renderer {
             vertex: wgpu::VertexState {
                 module: &sprite_shader,
                 entry_point: "vs_main",
-                buffers: &[SpriteVertex::desc()],
+                // buffers: &[SpriteVertex::desc()],
+                buffers: &[Vertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &sprite_shader,
@@ -399,14 +490,20 @@ impl Renderer {
     pub fn render<'pass>(
         &'pass self,
         render_pass: &mut RenderPass<'pass>,
+        shape_bind_group: &'pass wgpu::BindGroup,
         sprite_bind_group: &'pass wgpu::BindGroup,
     ) {
         // We need to loop over all the things we want to render and do these steps for each of them.
-        render_pass.set_pipeline(&self.shape_pipeline);
+        // render_pass.set_pipeline(&self.shape_pipeline);
+
+        // Draw a shape
+        render_pass.set_pipeline(&self.sprite_pipeline);
+        render_pass.set_bind_group(0, shape_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.shape_vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.shape_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.draw_indexed(0..self.shape_num_indices, 0, 0..1);
 
+        // Draw a sprite
         render_pass.set_pipeline(&self.sprite_pipeline);
         render_pass.set_bind_group(0, sprite_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.sprite_vertex_buffer.slice(..));
@@ -415,6 +512,12 @@ impl Renderer {
             wgpu::IndexFormat::Uint16,
         );
         render_pass.draw_indexed(0..self.sprite_num_indices, 0, 0..1);
+
+        // Draw an outline (not a wireframe)
+        // render_pass.set_pipeline(&self.shape_pipeline);
+        // render_pass.set_vertex_buffer(0, self.shape_vertex_buffer.slice(..));
+        // render_pass.set_index_buffer(self.shape_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        // render_pass.draw_indexed(0..self.shape_num_indices, 0, 0..1);
         // Here we also need to set the uniform bind group and maybe scissor rect for the rpass?
     }
 

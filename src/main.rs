@@ -58,10 +58,26 @@ pub async fn run() {
     );
 
     ////// Start game state stuff
+    let shape_bytes: &[u8] = &[255, 255, 255, 255];
+    let shape_texture = texture::Texture::from_bytes(
+        &bananas.device,
+        &bananas.queue,
+        1,
+        1,
+        shape_bytes,
+        Some("shape texture"),
+    )
+    .expect("TODO");
+    let shape_bind_group = renderer.create_sprite_bind_group(&shape_texture, &bananas.device); // TODO: <--- This is all renderer stuff
+
     let sprite_bytes = include_bytes!("../tree.png");
-    let sprite_texture =
-        texture::Texture::from_bytes(&bananas.device, &bananas.queue, sprite_bytes, "tree.png")
-            .expect("TODO");
+    let sprite_texture = texture::Texture::from_image_bytes(
+        &bananas.device,
+        &bananas.queue,
+        sprite_bytes,
+        "tree.png",
+    )
+    .expect("TODO");
     let sprite_bind_group = renderer.create_sprite_bind_group(&sprite_texture, &bananas.device);
     ////// End game state stuff
 
@@ -97,7 +113,7 @@ pub async fn run() {
             }
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 // state.update();
-                match make_piccys(&bananas, &renderer, &sprite_bind_group) {
+                match make_piccys(&bananas, &renderer, &shape_bind_group, &sprite_bind_group) {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -122,6 +138,7 @@ pub async fn run() {
 fn make_piccys(
     bananas: &Bananas,
     renderer: &Renderer,
+    shape_bind_group: &wgpu::BindGroup,
     sprite_bind_group: &wgpu::BindGroup,
 ) -> Result<(), wgpu::SurfaceError> {
     // TODO: Textures / sprites
@@ -143,7 +160,7 @@ fn make_piccys(
         // gfx.draw_shape(shape); ???
         // gfx.draw_sprite(sprite); ???
         // renderer.end(gfx); ???
-        renderer.render(&mut render_pass, sprite_bind_group);
+        renderer.render(&mut render_pass, shape_bind_group, sprite_bind_group);
     }
 
     bananas.queue.submit(iter::once(encoder.finish()));
