@@ -1,8 +1,18 @@
+use std::ops::Range;
+
 use glam::Mat4;
+use lyon::{
+    geom::{point, Box2D},
+    lyon_tessellation::{
+        BuffersBuilder, FillOptions, FillTessellator, FillVertexConstructor, StrokeOptions,
+        StrokeTessellator, StrokeVertexConstructor, VertexBuffers,
+    },
+    path::{Path, Winding},
+};
 use wgpu::{util::DeviceExt, RenderPass};
 use winit::window::Window;
 
-use crate::texture::Texture;
+use crate::{texture::Texture, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -92,6 +102,16 @@ const SPRITE_VERTICES: &[Vertex] = &[
 ];
 
 const SPRITE_INDICES: &[u16] = &[0, 1, 2, 2, 1, 3];
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct GpuVertex {
+    position: [f32; 3],
+    color: [f32; 4],
+}
+
+unsafe impl bytemuck::Pod for GpuVertex {}
+unsafe impl bytemuck::Zeroable for GpuVertex {}
 
 // // TODO: Combine these vertex structs
 // #[repr(C)]
@@ -220,6 +240,13 @@ pub struct Renderer {
 
     pub view_projection_uniform_buffer: wgpu::Buffer,
     pub uniforms_bind_group: wgpu::BindGroup,
+    depth_texture_view: Option<wgpu::TextureView>,
+
+    geometry_render_pipeline: wgpu::RenderPipeline,
+    geometry_vbo: wgpu::Buffer,
+    geometry_ibo: wgpu::Buffer,
+    geometry_fill_range: Range<u32>,
+    geometry_stroke_range: Range<u32>,
 }
 
 impl Renderer {
@@ -232,6 +259,19 @@ impl Renderer {
         clear_color: wgpu::Color,
         blend_state: wgpu::BlendState,
     ) -> Self {
+        let depth_stencil_state = Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Greater,
+            stencil: wgpu::StencilState {
+                front: wgpu::StencilFaceState::IGNORE,
+                back: wgpu::StencilFaceState::IGNORE,
+                read_mask: 0,
+                write_mask: 0,
+            },
+            bias: wgpu::DepthBiasState::default(),
+        });
+
         ////////////////////////////// Shape pipeline /////////////////////////////////
         // TODO: Can I use a single shader here? Should I?
         let shape_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -303,7 +343,7 @@ impl Renderer {
                 // Requires Features::CONSERVATIVE_RASTERIZATION
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: depth_stencil_state.clone(),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -455,7 +495,7 @@ impl Renderer {
                 // Requires Features::CONSERVATIVE_RASTERIZATION
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: depth_stencil_state.clone(),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -465,6 +505,124 @@ impl Renderer {
             // indicates how many array layers the attachments will have.
             multiview: None,
         });
+
+        /////////////////////////////// Geometry pipeline ///////////////////////////////////
+        let tolerance = 0.02;
+
+        let mut geometry: VertexBuffers<GpuVertex, u16> = VertexBuffers::new();
+
+        let mut fill_tess = FillTessellator::new();
+        let mut stroke_tess = StrokeTessellator::new();
+
+        let rect = Box2D::new(point(0.0, 0.0), point(500.0, 500.0));
+        let mut builder = Path::builder();
+        builder.add_rectangle(&rect, Winding::Negative);
+        let path = builder.build();
+
+        fill_tess
+            .tessellate_path(
+                &path,
+                &FillOptions::tolerance(tolerance)
+                    .with_fill_rule(lyon::tessellation::FillRule::NonZero),
+                &mut BuffersBuilder::new(&mut geometry, WithId),
+            )
+            .unwrap();
+
+        let geometry_fill_range = 0..(geometry.indices.len() as u32);
+
+        stroke_tess
+            .tessellate_path(
+                &path,
+                &StrokeOptions::tolerance(tolerance),
+                &mut BuffersBuilder::new(&mut geometry, WithId),
+            )
+            .unwrap();
+
+        let geometry_stroke_range = geometry_fill_range.end..(geometry.indices.len() as u32);
+
+        dbg!(&geometry);
+
+        let geometry_vbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&geometry.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let geometry_ibo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&geometry.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let geometry_vs_module = &device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Geometry vs"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("./../shaders/geometry.wgsl").into()),
+        });
+
+        let geometry_fs_module = &device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Geometry fs"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("./../shaders/geometry.wgsl").into()),
+        });
+
+        let geometry_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                bind_group_layouts: &[&uniforms_bind_group_layout],
+                push_constant_ranges: &[],
+                label: None,
+            });
+
+        let geometry_render_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Geometry pipeline"),
+                layout: Some(&geometry_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &geometry_vs_module,
+                    entry_point: "vs_main",
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                format: wgpu::VertexFormat::Float32x3,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 12,
+                                format: wgpu::VertexFormat::Float32x4,
+                                shader_location: 1,
+                            },
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &geometry_fs_module,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(blend_state),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    front_face: wgpu::FrontFace::Ccw,
+                    strip_index_format: None,
+                    cull_mode: Some(wgpu::Face::Back),
+                    conservative: false,
+                    unclipped_depth: false,
+                },
+                depth_stencil: depth_stencil_state.clone(),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+            });
+
+        let depth_texture_view = None;
 
         Self {
             shape_vertex_buffer,
@@ -482,6 +640,13 @@ impl Renderer {
 
             uniforms_bind_group,
             view_projection_uniform_buffer,
+            depth_texture_view,
+
+            geometry_render_pipeline,
+            geometry_vbo,
+            geometry_ibo,
+            geometry_fill_range,
+            geometry_stroke_range,
         }
     }
 
@@ -505,8 +670,27 @@ impl Renderer {
     //     render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
     // }
 
+    pub fn resize(&mut self, bananas: &Bananas) {
+        let depth_texture = bananas.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth texture"),
+            size: wgpu::Extent3d {
+                width: bananas.config.width,
+                height: bananas.config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        });
+
+        self.depth_texture_view =
+            Some(depth_texture.create_view(&wgpu::TextureViewDescriptor::default()));
+    }
+
     pub fn begin<'pass>(
-        &self,
+        &'pass self,
         encoder: &'pass mut wgpu::CommandEncoder,
         render_target: &'pass wgpu::TextureView,
     ) -> RenderPass<'pass> {
@@ -520,7 +704,18 @@ impl Renderer {
                     store: true,
                 },
             })],
-            depth_stencil_attachment: None,
+            // depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: self.depth_texture_view.as_ref().expect("TODO"),
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0.0),
+                    store: true,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: true,
+                }),
+            }),
         })
     }
 
@@ -533,30 +728,33 @@ impl Renderer {
         // We need to loop over all the things we want to render and do these steps for each of them.
         // render_pass.set_pipeline(&self.shape_pipeline);
 
-        // Draw a shape
-        render_pass.set_pipeline(&self.sprite_pipeline);
-        render_pass.set_bind_group(0, &self.uniforms_bind_group, &[]);
-        render_pass.set_bind_group(1, shape_bind_group, &[]);
-        render_pass.set_vertex_buffer(0, self.shape_vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.shape_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..self.shape_num_indices, 0, 0..1);
-
-        // Draw a sprite
-        render_pass.set_pipeline(&self.sprite_pipeline);
-        render_pass.set_bind_group(0, &self.uniforms_bind_group, &[]);
-        render_pass.set_bind_group(1, sprite_bind_group, &[]);
-        render_pass.set_vertex_buffer(0, self.sprite_vertex_buffer.slice(..));
-        render_pass.set_index_buffer(
-            self.sprite_index_buffer.slice(..),
-            wgpu::IndexFormat::Uint16,
-        );
-        render_pass.draw_indexed(0..self.sprite_num_indices, 0, 0..1);
-
-        // Draw an outline (not a wireframe)
-        // render_pass.set_pipeline(&self.shape_pipeline);
+        // // Draw a shape
+        // render_pass.set_pipeline(&self.sprite_pipeline);
+        // render_pass.set_bind_group(0, &self.uniforms_bind_group, &[]);
+        // render_pass.set_bind_group(1, shape_bind_group, &[]);
         // render_pass.set_vertex_buffer(0, self.shape_vertex_buffer.slice(..));
         // render_pass.set_index_buffer(self.shape_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         // render_pass.draw_indexed(0..self.shape_num_indices, 0, 0..1);
+
+        // // Draw a sprite
+        // render_pass.set_pipeline(&self.sprite_pipeline);
+        // render_pass.set_bind_group(0, &self.uniforms_bind_group, &[]);
+        // render_pass.set_bind_group(1, sprite_bind_group, &[]);
+        // render_pass.set_vertex_buffer(0, self.sprite_vertex_buffer.slice(..));
+        // render_pass.set_index_buffer(
+        //     self.sprite_index_buffer.slice(..),
+        //     wgpu::IndexFormat::Uint16,
+        // );
+        // render_pass.draw_indexed(0..self.sprite_num_indices, 0, 0..1);
+
+        // Draw the tessellated geometry
+        render_pass.set_pipeline(&self.geometry_render_pipeline);
+        render_pass.set_bind_group(0, &self.uniforms_bind_group, &[]);
+        render_pass.set_index_buffer(self.geometry_ibo.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.set_vertex_buffer(0, self.geometry_vbo.slice(..));
+        render_pass.draw_indexed(self.geometry_fill_range.clone(), 0, 0..1);
+        render_pass.draw_indexed(self.geometry_stroke_range.clone(), 0, 0..1);
+
         // Here we also need to set the uniform bind group and maybe scissor rect for the rpass?
     }
 
@@ -643,6 +841,34 @@ impl Bananas {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+        }
+    }
+}
+
+pub struct WithId;
+
+// var transformed_pos = world_pos * vec3<f32>(globals.zoom / (0.5 * globals.resolution.x), globals.zoom / (0.5 * globals.resolution.y), 1.0);
+// TODO: Pass in color and ZIndex
+impl FillVertexConstructor<GpuVertex> for WithId {
+    fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> GpuVertex {
+        let p = vertex.position().to_array();
+        let z_index = 0.0; // 1.0;
+        GpuVertex {
+            position: [p[0], p[1], z_index],
+            color: [1.0, 1.0, 1.0, 1.0],
+        }
+    }
+}
+
+// TODO: We want the color, ZIndex and the width passed in.
+impl StrokeVertexConstructor<GpuVertex> for WithId {
+    fn new_vertex(&mut self, vertex: lyon::tessellation::StrokeVertex) -> GpuVertex {
+        let stroke_width = 1.0;
+        let p = (vertex.position() + vertex.normal() * stroke_width).to_array();
+        let z_index = 0.0; // 2.0;
+        GpuVertex {
+            position: [p[0], p[1], z_index],
+            color: [0.0, 0.0, 0.0, 1.0],
         }
     }
 }

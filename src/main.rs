@@ -16,8 +16,8 @@ fn main() {
 }
 
 const ASPECT_RATIO: f32 = 16_f32 / 9_f32;
-const WIDTH: u32 = 1024;
-const HEIGHT: u32 = (WIDTH as f32 / ASPECT_RATIO) as u32;
+pub const DEFAULT_WINDOW_WIDTH: u32 = 1024;
+pub const DEFAULT_WINDOW_HEIGHT: u32 = (DEFAULT_WINDOW_WIDTH as f32 / ASPECT_RATIO) as u32;
 
 pub async fn run() {
     env_logger::init();
@@ -29,7 +29,7 @@ pub async fn run() {
         .next()
         .expect("no monitors found");
 
-    let size = LogicalSize::new(WIDTH as f64, HEIGHT as f64);
+    let size = LogicalSize::new(DEFAULT_WINDOW_WIDTH as f64, DEFAULT_WINDOW_HEIGHT as f64);
     let window = WindowBuilder::new()
         .with_title("Papercut")
         .with_inner_size(size)
@@ -50,7 +50,7 @@ pub async fn run() {
         alpha: wgpu::BlendComponent::REPLACE,
     };
     let mut bananas = pollster::block_on(Bananas::new(&window)); //.expect("TODO"); //?;
-    let renderer = Renderer::new(
+    let mut renderer = Renderer::new(
         &bananas.device,
         bananas.config.format,
         clear_color,
@@ -106,11 +106,13 @@ pub async fn run() {
                         // TODO: Resize should scale the view up or down, not show more or less of it.
                         bananas.resize(*physical_size);
                         camera.resize(physical_size.width as f32, physical_size.height as f32);
+                        renderer.resize(&bananas);
                     }
                     WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
                         // TODO: Resize should scale the view up or down, not show more or less of it.
                         bananas.resize(**new_inner_size);
                         camera.resize(new_inner_size.width as f32, new_inner_size.height as f32);
+                        renderer.resize(&bananas);
                     }
                     _ => {}
                 }
@@ -128,7 +130,9 @@ pub async fn run() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        bananas.resize(bananas.size)
+                        bananas.resize(bananas.size);
+                        camera.resize(bananas.size.width as f32, bananas.size.height as f32);
+                        renderer.resize(&bananas);
                     }
                     // The system is out of memory, we should probably quit
                     Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
