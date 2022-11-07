@@ -1,3 +1,4 @@
+use glam::Mat4;
 use wgpu::{util::DeviceExt, RenderPass};
 use winit::window::Window;
 
@@ -39,27 +40,27 @@ impl Vertex {
 
 const SHAPE_VERTICES: &[Vertex] = &[
     Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
+        position: [-8.68241, 49.240386, 0.0],
         tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // A
     Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
+        position: [-49.513406, 6.958647, 0.0],
         tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // B
     Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
+        position: [-21.918549, -44.939706, 0.0],
         tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // C
     Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
+        position: [35.966998, -34.73291, 0.0],
         tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // D
     Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
+        position: [44.147372, 23.47359, 0.0],
         tex_coords: [0.0, 0.0],
         color: [0.5, 0.0, 0.5],
     }, // E
@@ -69,22 +70,22 @@ const SHAPE_INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, 0];
 
 const SPRITE_VERTICES: &[Vertex] = &[
     Vertex {
-        position: [-0.25, 0.25, 0.0],
+        position: [-25.0, 25.0, 0.0],
         tex_coords: [0.0, 0.0],
         color: [1.0, 1.0, 1.0],
     }, // A
     Vertex {
-        position: [-0.25, -0.75, 0.0],
+        position: [-25.0, -75.0, 0.0],
         tex_coords: [0.0, 1.0],
         color: [1.0, 1.0, 1.0],
     }, // B
     Vertex {
-        position: [0.75, 0.25, 0.0],
+        position: [75.0, 25.0, 0.0],
         tex_coords: [1.0, 0.0],
         color: [1.0, 1.0, 1.0],
     }, // C
     Vertex {
-        position: [0.75, -0.75, 0.0],
+        position: [75.0, -75.0, 0.0],
         tex_coords: [1.0, 1.0],
         color: [1.0, 1.0, 1.0],
     }, // D
@@ -216,6 +217,9 @@ pub struct Renderer {
     sprite_pipeline: wgpu::RenderPipeline,
     sprite_num_indices: u32,
     sprite_bind_group_layout: wgpu::BindGroupLayout,
+
+    pub view_projection_uniform_buffer: wgpu::Buffer,
+    pub uniforms_bind_group: wgpu::BindGroup,
 }
 
 impl Renderer {
@@ -334,9 +338,39 @@ impl Renderer {
         });
         let sprite_num_indices = SPRITE_INDICES.len() as u32;
 
-        // Uniform buffer here.
+        // Uniform buffer
+        let view_projection_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("View Projection Uniform Buffer"),
+            size: std::mem::size_of::<ViewProjectionUniform>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-        // Bind group
+        // Bind groups
+        let uniforms_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Uniforms Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Uniforms Bind Group"),
+            layout: &uniforms_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: view_projection_uniform_buffer.as_entire_binding(),
+            }],
+        });
+
         let sprite_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -382,7 +416,7 @@ impl Renderer {
         let sprite_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Sprite Pipeline Layout"),
-                bind_group_layouts: &[&sprite_bind_group_layout],
+                bind_group_layouts: &[&uniforms_bind_group_layout, &sprite_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -445,6 +479,9 @@ impl Renderer {
             sprite_pipeline,
             sprite_num_indices,
             sprite_bind_group_layout,
+
+            uniforms_bind_group,
+            view_projection_uniform_buffer,
         }
     }
 
@@ -498,14 +535,16 @@ impl Renderer {
 
         // Draw a shape
         render_pass.set_pipeline(&self.sprite_pipeline);
-        render_pass.set_bind_group(0, shape_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.uniforms_bind_group, &[]);
+        render_pass.set_bind_group(1, shape_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.shape_vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.shape_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.draw_indexed(0..self.shape_num_indices, 0, 0..1);
 
         // Draw a sprite
         render_pass.set_pipeline(&self.sprite_pipeline);
-        render_pass.set_bind_group(0, sprite_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.uniforms_bind_group, &[]);
+        render_pass.set_bind_group(1, sprite_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.sprite_vertex_buffer.slice(..));
         render_pass.set_index_buffer(
             self.sprite_index_buffer.slice(..),
@@ -605,5 +644,62 @@ impl Bananas {
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
         }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ViewProjectionUniform {
+    pub(crate) view: [[f32; 4]; 4],
+    pub(crate) projection: [[f32; 4]; 4],
+}
+
+#[allow(dead_code)]
+pub struct Camera {
+    width: f32,
+    height: f32,
+    view: Mat4,
+    projection: Mat4,
+}
+
+impl Camera {
+    pub fn new(width: f32, height: f32) -> Self {
+        let projection = glam::Mat4::orthographic_lh(0.0, width, 0.0, height, -1.0, 1.0);
+
+        Self {
+            width,
+            height,
+            view: Mat4::IDENTITY,
+            projection,
+        }
+    }
+
+    pub fn resize(&mut self, width: f32, height: f32) {
+        let projection = glam::Mat4::orthographic_lh(0.0, width, 0.0, height, -1.0, 1.0);
+
+        self.width = width;
+        self.height = height;
+        self.projection = projection;
+    }
+
+    pub fn get_view(&self) -> Mat4 {
+        // Just use some jankey values for look at for now.
+        let view = glam::Mat4::look_at_lh(
+            glam::Vec3::new(-200.0, -200.0, -1.0),
+            glam::Vec3::new(-200.0, -200.0, 0.0),
+            glam::Vec3::Y,
+        );
+
+        // let view = glam::Mat4::look_at_lh(
+        //     glam::Vec3::new(0.0, 0.0, -1.0),
+        //     glam::Vec3::new(0.0, 0.0, 0.0),
+        //     glam::Vec3::Y,
+        // );
+
+        view
+    }
+
+    pub fn get_projection(&self) -> Mat4 {
+        self.projection
     }
 }

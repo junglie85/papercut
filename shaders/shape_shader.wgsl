@@ -1,5 +1,13 @@
 // Vertex shader
 
+struct ViewProjection {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> view_projection: ViewProjection;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(2) color: vec3<f32>,

@@ -34,6 +34,14 @@
 
 // Vertex shader
 
+struct ViewProjection {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> view_projection: ViewProjection;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
@@ -51,7 +59,7 @@ fn vs_main(
     model: VertexInput,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = vec4<f32>(model.position, 1.0);
+    out.clip_position = view_projection.projection * view_projection.view * vec4<f32>(model.position, 1.0);
     out.tex_coords = model.tex_coords;
     out.color = model.color;
     return out;
@@ -59,9 +67,9 @@ fn vs_main(
 
 // Fragment shader
 
-@group(0) @binding(0)
+@group(1) @binding(0)
 var t_diffuse: texture_2d<f32>;
-@group(0) @binding(1)
+@group(1) @binding(1)
 var s_diffuse: sampler;
 
 @fragment

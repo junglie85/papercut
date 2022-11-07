@@ -1,6 +1,6 @@
 use std::iter;
 
-use renderer::{Bananas, Renderer};
+use renderer::{Bananas, Camera, Renderer, ViewProjectionUniform};
 use winit::{
     dpi::LogicalSize,
     event::*,
@@ -79,6 +79,8 @@ pub async fn run() {
     )
     .expect("TODO");
     let sprite_bind_group = renderer.create_sprite_bind_group(&sprite_texture, &bananas.device);
+
+    let mut camera = Camera::new(size.width as f32, size.height as f32);
     ////// End game state stuff
 
     window.set_visible(true);
@@ -101,11 +103,14 @@ pub async fn run() {
                         ..
                     } => *control_flow = ControlFlow::Exit,
                     WindowEvent::Resized(physical_size) => {
+                        // TODO: Resize should scale the view up or down, not show more or less of it.
                         bananas.resize(*physical_size);
+                        camera.resize(physical_size.width as f32, physical_size.height as f32);
                     }
                     WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        // new_inner_size is &mut so w have to dereference it twice
+                        // TODO: Resize should scale the view up or down, not show more or less of it.
                         bananas.resize(**new_inner_size);
+                        camera.resize(new_inner_size.width as f32, new_inner_size.height as f32);
                     }
                     _ => {}
                 }
@@ -113,7 +118,13 @@ pub async fn run() {
             }
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 // state.update();
-                match make_piccys(&bananas, &renderer, &shape_bind_group, &sprite_bind_group) {
+                match make_piccys(
+                    &bananas,
+                    &renderer,
+                    &shape_bind_group,
+                    &sprite_bind_group,
+                    &camera,
+                ) {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -140,6 +151,7 @@ fn make_piccys(
     renderer: &Renderer,
     shape_bind_group: &wgpu::BindGroup,
     sprite_bind_group: &wgpu::BindGroup,
+    camera: &Camera,
 ) -> Result<(), wgpu::SurfaceError> {
     // TODO: Textures / sprites
     // TODO: Camera
@@ -153,6 +165,28 @@ fn make_piccys(
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
+
+    let view_projection_uniform = ViewProjectionUniform {
+        view: camera.get_view().to_cols_array_2d(),
+        projection: camera.get_projection().to_cols_array_2d(),
+    };
+
+    let view_projection_uniform_buffer = wgpu::util::DeviceExt::create_buffer_init(
+        &bananas.device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("View Projection Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[view_projection_uniform]),
+            usage: wgpu::BufferUsages::COPY_SRC,
+        },
+    );
+
+    encoder.copy_buffer_to_buffer(
+        &view_projection_uniform_buffer,
+        0,
+        &renderer.view_projection_uniform_buffer,
+        0,
+        std::mem::size_of::<ViewProjectionUniform>() as wgpu::BufferAddress,
+    );
 
     {
         let mut render_pass = renderer.begin(&mut encoder, &render_target);
